@@ -17,6 +17,32 @@ The project combines **Vapi, n8n, OpenAI, Google Calendar, Google Sheets, Gmail,
 - Urgency and sentiment detection
 - Vapi tool calling through n8n webhooks
 
+## Project Demonstration
+
+### Complete n8n Workflow
+
+The complete workflow orchestrates Vapi voice calls, OpenAI processing, calendar scheduling, message handling, and automated notifications.
+
+![Complete AI Voice Agent Workflow](screenshots/01-full-workflow.png)
+
+### Vapi AI Voice Assistant
+
+The Vapi assistant handles real-time voice conversations and communicates with the n8n workflow through webhook-based tool calls.
+
+![Vapi AI Voice Assistant](screenshots/02-vapi-assistant.png)
+
+### Calendar Availability & Appointment Booking
+
+The agent checks Google Calendar availability before creating an appointment, preventing duplicate bookings.
+
+![Calendar Booking](screenshots/03-calendar-booking.png)
+
+### Caller Message Automation
+
+When a caller leaves a message, the workflow records the information, saves it to Google Sheets, sends an email notification, and returns confirmation to the caller.
+
+![Take Message Workflow](screenshots/04-take-message.png)
+
 ## Workflow Architecture
 
 ```text
