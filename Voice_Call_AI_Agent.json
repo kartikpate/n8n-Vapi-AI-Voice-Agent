@@ -1,0 +1,1342 @@
+{
+  "name": "AI Voice Agent - GitHub Safe",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "voice-call-webhook",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "20859522-f9a7-4ce4-ae41-6be16af3163b",
+      "name": "Call Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -656,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Safely extract message type from either payload structure\nconst body = $input.first().json;\n\n// Handle both wrapped and unwrapped payloads\nconst message = body.body?.message || body.message || {};\nconst call = message.call || {};\nconst customer = call.customer || {};\nconst artifact = message.artifact || {};\nconst messages = artifact.messages || [];\n\nreturn {\n  messageType: message.type || 'unknown',\n  callId: call.id || 'unknown',\n  callerNumber: customer.number || 'unknown',\n  callType: call.type || 'unknown',\n  messages: messages,\n  lastUserMessage: messages.filter(m => m.role === 'user').pop()?.content || '',\n  toolCalls: message.toolCalls || [],\n  transcript: artifact.transcript || '',\n  summary: artifact.summary || '',\n  durationSeconds: message.durationSeconds || 0,\n  endedReason: message.endedReason || '',\n  rawPayload: body\n};"
+      },
+      "id": "4e1cd8f5-3174-4e7e-b8b3-9bb40d5a72be",
+      "name": "Parse Incoming Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -448,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract the AI response text safely\nconst openAiOutput = $input.first().json;\n\n// Get content from OpenAI response\nlet content = '';\n\nif (openAiOutput.message?.content) {\n  content = openAiOutput.message.content;\n} else if (openAiOutput.choices?.[0]?.message?.content) {\n  content = openAiOutput.choices[0].message.content;\n} else if (typeof openAiOutput.content === 'string') {\n  content = openAiOutput.content;\n} else {\n  content = 'Thank you for calling. How can I help you today?';\n}\n\nreturn {\n  responseText: content,\n  fullResponse: openAiOutput\n};"
+      },
+      "id": "956052c1-9158-4982-a90a-a37b4490b3ad",
+      "name": "Extract AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"messageResponse\": {\n    \"role\": \"assistant\",\n    \"content\": {{ JSON.stringify($json.responseText) }}\n  }\n}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "5edd029c-77cc-48f7-8768-9f4c43fca1d2",
+      "name": "Respond to VAPI",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        864,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const openAiOutput = $input.first().json;\n\n// Try multiple common locations for the model response\nlet content =\n  openAiOutput.message?.content ||\n  openAiOutput.choices?.[0]?.message?.content ||\n  openAiOutput.output_text ||\n  openAiOutput.text ||\n  openAiOutput.output?.[0]?.content?.[0]?.text ||\n  '{}';\n\n// If content is not already a string\nif (typeof content !== 'string') {\n  content = JSON.stringify(content);\n}\n\nlet analysis;\n\ntry {\n  const cleaned = content\n    .replace(/```json\\s*/gi, '')\n    .replace(/```\\s*/g, '')\n    .trim();\n\n  analysis = JSON.parse(cleaned);\n} catch (e) {\n  analysis = {\n    callerName: 'Unknown',\n    intent: 'other',\n    summary: content,\n    appointmentRequested: false,\n    appointmentDate: null,\n    appointmentTime: null,\n    actionRequired: 'Manual review needed',\n    sentiment: 'neutral',\n    urgency: 'low'\n  };\n}\n\n// Bring back the original call information\nconst callData = $('Parse Incoming Data').first().json;\n\n// Normalize important fields\nanalysis.appointmentRequested =\n  analysis.appointmentRequested === true ||\n  analysis.appointmentRequested === 'true';\n\nreturn {\n  ...callData,\n  ...analysis,\n  processedAt: new Date().toISOString()\n};"
+      },
+      "id": "d508f0ff-3567-426b-a7ea-426645db22c8",
+      "name": "Parse AI Analysis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        656,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.appointmentRequested }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "id": "d5b6b33d-dfdd-4ae1-a58e-a55ae8795fe8"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d027a6c1-fdc5-4b2b-aa0d-49d509acf4a8",
+      "name": "Appointment Requested?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1008,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"status\": \"received\" }",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "83d59ea8-95c5-4afe-8bf0-554f6bd09e3f",
+      "name": "Acknowledge End of Call",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        208,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\n\n// Get original Vapi message\nconst message =\n  data.rawPayload?.body?.message ||\n  data.body?.message ||\n  data.message ||\n  {};\n\n// Try all common Vapi tool-call locations\nconst toolCalls =\n  (Array.isArray(data.toolCalls) && data.toolCalls.length > 0\n    ? data.toolCalls\n    : null) ||\n  message.toolCallList ||\n  message.toolCalls ||\n  [];\n\nconst firstTool = toolCalls[0] || {};\n\n// Get function information\nconst fn = firstTool.function || {};\n\n// Tool name\nlet toolName =\n  fn.name ||\n  firstTool.name ||\n  message.toolWithToolCallList?.[0]?.toolCall?.function?.name ||\n  message.toolWithToolCallList?.[0]?.name ||\n  'unknown';\n\n// Tool arguments\nlet toolArgs =\n  fn.arguments ??\n  firstTool.arguments ??\n  firstTool.parameters ??\n  message.toolWithToolCallList?.[0]?.toolCall?.function?.parameters ??\n  {};\n\nif (typeof toolArgs === 'string') {\n  try {\n    toolArgs = JSON.parse(toolArgs);\n  } catch (e) {\n    toolArgs = {};\n  }\n}\n\n// Tool call ID\nconst toolCallId =\n  firstTool.id ||\n  firstTool.toolCallId ||\n  message.toolWithToolCallList?.[0]?.toolCall?.id ||\n  'unknown';\n\nreturn {\n  toolName,\n  toolArgs,\n  toolCallId\n};"
+      },
+      "id": "01420d95-6769-4c5a-851f-14232ba0114c",
+      "name": "Extract Tool Call",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const availabilityData = $input.first().json;\n\n// Get original tool call information\nconst toolData = $('Extract Tool Call').first().json;\n\nconst toolCallId = toolData.toolCallId;\nconst date = toolData.toolArgs.date;\nconst time = toolData.toolArgs.time;\n\nconst available = availabilityData.available === true;\n\nlet result;\n\nif (available) {\n  result = `The requested appointment time ${time} on ${date} is available. Would you like me to book it?`;\n} else {\n  result = `The requested appointment time ${time} on ${date} is not available. Please choose another time.`;\n}\n\nreturn {\n  toolCallId,\n  result\n};"
+      },
+      "id": "b51e5509-86b2-44e2-bf7a-1303e5d2833b",
+      "name": "Check Calendar Availability",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1264,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const toolData = $('Extract Tool Call').first().json;\n\nconst toolCallId = toolData.toolCallId;\nconst args = toolData.toolArgs;\n\nconst date = args.date;\nconst time = args.time;\nconst name = args.name || 'Caller';\n\nreturn {\n  toolCallId,\n  result: `Your appointment has been successfully booked for ${date} at ${time} for ${name}.`\n};"
+      },
+      "id": "c5df1348-5e80-4036-884b-2bafe7dc851b",
+      "name": "Book Appointment Tool",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1488,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const toolData = $('Extract Tool Call').first().json;\n\nconst args = toolData.toolArgs || {};\n\nconst name = args.name || 'Unknown';\nconst phone =\n  args.phone ||\n  $('Parse Incoming Data').first().json.callerNumber ||\n  'Unknown';\n\nconst email = args.email || '';\nconst message =\n  args.message ||\n  args.note ||\n  args.reason ||\n  'No message provided';\n\nreturn {\n  toolCallId: toolData.toolCallId,\n  callerName: name,\n  callerPhone: phone,\n  callerEmail: email,\n  callerMessage: message,\n  callId: $('Parse Incoming Data').first().json.callId || '',\n  receivedAt: new Date().toISOString()\n};"
+      },
+      "id": "1414d240-f681-4f3a-95ee-6cb197123fc4",
+      "name": "Take Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1152,
+        1072
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"results\": [\n    {\n      \"toolCallId\": {{ JSON.stringify($json.toolCallId) }},\n      \"result\": {{ JSON.stringify($json.result) }}\n    }\n  ]\n}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "1e571312-e951-4c7e-a141-d4dd8590c213",
+      "name": "Return Tool Result to VAPI",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2624,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4.1-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4.1-MINI"
+        },
+        "responses": {
+          "values": [
+            {}
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        304,
+        0
+      ],
+      "id": "24e6b5fc-0b63-4d87-840a-43750004839a",
+      "name": "Message a model"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4.1-mini-2025-04-14",
+          "mode": "list",
+          "cachedResultName": "GPT-4.1-MINI-2025-04-14"
+        },
+        "responses": {
+          "values": [
+            {
+              "content": "=Analyze the following phone call transcript and return ONLY valid JSON.\n\nExtract the caller's information carefully.\n\nRules:\n- If the caller states their name, extract it exactly.\n- Only use \"Unknown\" if no caller name is present in the transcript.\n- If an appointment is requested, extract the appointment date and time.\n- appointmentDate must use YYYY-MM-DD format.\n- appointmentTime must use HH:mm 24-hour format.\n\nReturn exactly this structure:\n\n{\n  \"callerName\": \"string\",\n  \"intent\": \"string\",\n  \"summary\": \"string\",\n  \"appointmentRequested\": true,\n  \"appointmentDate\": \"YYYY-MM-DD\",\n  \"appointmentTime\": \"HH:mm\",\n  \"actionRequired\": \"string\",\n  \"sentiment\": \"string\",\n  \"urgency\": \"string\"\n}\n\nTranscript:\n{{ $json.transcript }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        256,
+        208
+      ],
+      "id": "808c11cd-c370-4d4d-b1d7-8aa0a2147e5d",
+      "name": "Message a model1"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.messageType }}",
+                    "rightValue": "assistant-request",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "281fc33d-1c2f-4372-a7a2-0314d4430036"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Assistant Request"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "0b1e591b-51bc-4012-8e19-2ec975d339dd",
+                    "leftValue": "={{ $json.messageType }}",
+                    "rightValue": "=end-of-call-report",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "End of Call"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "03c0ac74-a1b5-4e6d-8ea6-e2ed4311b29e",
+                    "leftValue": "={{ $json.messageType }}",
+                    "rightValue": "tool-calls",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Tool Call"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        -240,
+        128
+      ],
+      "id": "4b330cc1-9cb4-4208-a6c4-a7f7b303a18a",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "Select your Google Sheet"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "Select your sheet"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Call ID": "={{ $json.callId }}",
+            "Date ": "={{ $json.processedAt }}",
+            "Caller Phone ": "={{ $json.callerPhone }}",
+            "Caller Name ": "={{ $json.callerName }}",
+            "Duration ": "={{ $json.durationSeconds }}",
+            "Intent ": "={{ $json.intent }}",
+            "Summary ": "={{ $json.summary }}",
+            "Appoinment Request ": "={{ $json.appointmentRequested }}",
+            "Action Required ": "={{ $json.actionRequired }}",
+            "Sentiment ": "={{ $json.sentiment }}",
+            "Urgency ": "={{ $json.urgency }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Call ID",
+              "displayName": "Call ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Date ",
+              "displayName": "Date ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Caller Phone ",
+              "displayName": "Caller Phone ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Caller Name ",
+              "displayName": "Caller Name ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Duration ",
+              "displayName": "Duration ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Intent ",
+              "displayName": "Intent ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Summary ",
+              "displayName": "Summary ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Appoinment Request ",
+              "displayName": "Appoinment Request ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Action Required ",
+              "displayName": "Action Required ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Sentiment ",
+              "displayName": "Sentiment ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Urgency ",
+              "displayName": "Urgency ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        496,
+        416
+      ],
+      "id": "86736084-bc2b-4b89-889f-68a663500739",
+      "name": "Append row in sheet"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "Select your Google Sheet"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "Select your sheet"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Call ID": "={{ $json.callId }}",
+            "Date ": "={{ $json.processedAt }}",
+            "Caller Phone ": "={{ $json.callerPhone }}",
+            "Caller Name ": "={{ $json.callerName }}",
+            "Intent ": "={{ $json.intent }}",
+            "Summary ": "={{ $json.summary }}",
+            "Urgency ": "={{ $json.urgency }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Call ID",
+              "displayName": "Call ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Date ",
+              "displayName": "Date ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Caller Phone ",
+              "displayName": "Caller Phone ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Caller Name ",
+              "displayName": "Caller Name ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Duration ",
+              "displayName": "Duration ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Intent ",
+              "displayName": "Intent ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Summary ",
+              "displayName": "Summary ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Appoinment Request ",
+              "displayName": "Appoinment Request ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Action Required ",
+              "displayName": "Action Required ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Sentiment ",
+              "displayName": "Sentiment ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Urgency ",
+              "displayName": "Urgency ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1232,
+        240
+      ],
+      "id": "dd8323c6-9a0f-46c6-8ab6-89b4ea674a31",
+      "name": "Append row in sheet1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "86f583b8-30eb-460c-9e06-2a42d6d0cda2",
+              "leftValue": "={{ $json.urgency }}",
+              "rightValue": "high",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1424,
+        240
+      ],
+      "id": "d98b6d79-a429-42f3-8ce7-3995a7113680",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "sendTo": "your-email@example.com",
+        "subject": "Urgent Call alert ",
+        "message": "=<h2>🚨 Urgent Call Alert</h2>\n\n<table style=\"border-collapse:collapse; font-family:Arial;\">\n  <tr><td><b>Caller Name</b></td><td>{{ $json.callerName }}</td></tr>\n  <tr><td><b>Phone</b></td><td>{{ $json.callerPhone }}</td></tr>\n  <tr><td><b>Intent</b></td><td>{{ $json.intent }}</td></tr>\n  <tr><td><b>Urgency</b></td><td>🔴 HIGH</td></tr>\n  <tr><td><b>Sentiment</b></td><td>{{ $json.sentiment }}</td></tr>\n  <tr><td><b>Time</b></td><td>{{ $json.processedAt }}</td></tr>\n</table>\n\n<h3>📋 Summary</h3>\n<p>{{ $json.summary }}</p>\n\n<h3>⚡ Action Required</h3>\n<p>{{ $json.actionRequired }}</p>\n\n<p><i>Sent automatically by your AI Voice Agent</i></p>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1664,
+        224
+      ],
+      "id": "66f0449b-1a77-468c-b941-15934e873b94",
+      "name": "Send a message"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.toolName }}",
+                    "rightValue": "check_availability",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "477577c5-5a79-4543-958d-a047cb6632dc"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Check Availability"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "9af39820-be19-46b1-a2d7-ecaceda5c8c8",
+                    "leftValue": "={{ $json.toolName }}",
+                    "rightValue": "bookAppointment",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Book Appointment"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "dbf342eb-eaa7-44a5-9ca4-b1e9f2b11532",
+                    "leftValue": "={{ $json.toolName }}",
+                    "rightValue": "takeMessage",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Take Message"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        384,
+        640
+      ],
+      "id": "78eb102b-331a-403b-8188-baf3cc70cfcf",
+      "name": "Switch1"
+    },
+    {
+      "parameters": {
+        "resource": "calendar",
+        "calendar": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "Select your calendar"
+        },
+        "timeMin": "={{ DateTime.fromISO(\n  $json.toolArgs.date + 'T' + $json.toolArgs.time,\n  { zone: 'America/Los_Angeles' }\n).toISO() }}",
+        "timeMax": "={{ DateTime.fromISO(\n  $json.toolArgs.date + 'T' + $json.toolArgs.time,\n  { zone: 'America/Los_Angeles' }\n).plus({ hours: 1 }).toISO() }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        928,
+        496
+      ],
+      "id": "2d1eea0f-0860-451f-8270-29ec0040fdd5",
+      "name": "Get Calendar Events"
+    },
+    {
+      "parameters": {
+        "resource": "calendar",
+        "calendar": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "Select your calendar"
+        },
+        "timeMin": "={{ DateTime.fromISO(\n  $json.toolArgs.date + 'T' + $json.toolArgs.time,\n  { zone: 'America/Los_Angeles' }\n).toISO() }}",
+        "timeMax": "={{ DateTime.fromISO(\n  $json.toolArgs.date + 'T' + $json.toolArgs.time,\n  { zone: 'America/Los_Angeles' }\n).plus({ hours: 1 }).toISO() }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        800,
+        720
+      ],
+      "id": "28621742-f158-4cde-a835-77bd79809682",
+      "name": "Check Booking Slot"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "f9c63707-6bff-471b-8101-80cccdcbafab",
+              "leftValue": "={{ $json.available }}",
+              "rightValue": "true ",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1008,
+        768
+      ],
+      "id": "876ae188-7315-41df-90e1-73d7cf107578",
+      "name": "Is Slot Available?"
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "Select your calendar"
+        },
+        "start": "={{ DateTime.fromISO(\n  $('Extract Tool Call').first().json.toolArgs.date + 'T' +\n  $('Extract Tool Call').first().json.toolArgs.time,\n  { zone: 'America/Los_Angeles' }\n).toISO() }}",
+        "end": "={{ DateTime.fromISO(\n  $('Extract Tool Call').first().json.toolArgs.date + 'T' +\n  $('Extract Tool Call').first().json.toolArgs.time,\n  { zone: 'America/Los_Angeles' }\n).plus({ hours: 1 }).toISO() }}",
+        "additionalFields": {
+          "description": "=Name: {{ $('Extract Tool Call').first().json.toolArgs.name }} Email: {{ $('Extract Tool Call').first().json.toolArgs.email }} Booked by: AI Voice Agent",
+          "summary": "={{ 'Appointment with ' + ($('Extract Tool Call').first().json.toolArgs.name || 'Caller') }}"
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        1248,
+        688
+      ],
+      "id": "7af578e0-0646-4887-8f7b-f717ffccc90f",
+      "name": "Create Appointment"
+    },
+    {
+      "parameters": {
+        "jsCode": "const toolData = $('Extract Tool Call').first().json;\n\nconst toolCallId = toolData.toolCallId;\nconst args = toolData.toolArgs;\n\nreturn {\n  toolCallId,\n  result: `The requested appointment time ${args.time} on ${args.date} is already booked. Please choose another available time.`\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1248,
+        880
+      ],
+      "id": "e2fe9af2-050a-4060-acb5-8fff47656aa3",
+      "name": "Booking Slot Unavailable"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "Select your Google Sheet"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "Select your sheet"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Call ID ": "={{ $json.callId }}",
+            "Caller Name ": "={{ $json.callerName }}",
+            "Phone ": "={{ $json.callerPhone }}",
+            "Email ": "={{ $json.callerEmail }}",
+            "Message ": "={{ $json.callerMessage }}",
+            "Recieve At ": "={{ $json.receivedAt }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Call ID ",
+              "displayName": "Call ID ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Caller Name ",
+              "displayName": "Caller Name ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Phone ",
+              "displayName": "Phone ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Email ",
+              "displayName": "Email ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Message ",
+              "displayName": "Message ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Recieve At ",
+              "displayName": "Recieve At ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1360,
+        1072
+      ],
+      "id": "90d816a7-8da2-4c0e-82ca-67102e04af96",
+      "name": "Save Caller Message"
+    },
+    {
+      "parameters": {
+        "jsCode": "const messageData = $('Take Message').first().json;\n\nreturn {\n  toolCallId: messageData.toolCallId,\n  result: `Thank you, ${messageData.callerName}. Your message has been recorded and the office can follow up with you.`\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1776,
+        1072
+      ],
+      "id": "bea37325-5e5f-4046-a42e-f9b0a39eb5ce",
+      "name": "Message Saved Confirmation"
+    },
+    {
+      "parameters": {
+        "sendTo": "your-email@example.com",
+        "subject": "={{ 'New Caller Message - ' + $('Take Message').first().json.callerName }}",
+        "message": "=New message received from the AI Voice Agent.  Caller Name: {{ $('Take Message').first().json.callerName }} Phone: {{ $('Take Message').first().json.callerPhone }} Email: {{ $('Take Message').first().json.callerEmail }}  Message: {{ $('Take Message').first().json.callerMessage }}  Call ID: {{ $('Take Message').first().json.callId }} Received At: {{ $('Take Message').first().json.receivedAt }}  Generated automatically by AI Voice Agent.",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1568,
+        1072
+      ],
+      "id": "690dcece-ca52-4515-ae4c-9021fdf2a31e",
+      "name": "Send Message Notification"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Call Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Incoming Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Incoming Data": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract AI Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to VAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Analysis": {
+      "main": [
+        [
+          {
+            "node": "Appointment Requested?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Tool Call": {
+      "main": [
+        [
+          {
+            "node": "Switch1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Calendar Availability": {
+      "main": [
+        [
+          {
+            "node": "Return Tool Result to VAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Book Appointment Tool": {
+      "main": [
+        [
+          {
+            "node": "Return Tool Result to VAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Take Message": {
+      "main": [
+        [
+          {
+            "node": "Save Caller Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Extract AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model1": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Message a model1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Acknowledge End of Call",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract Tool Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Appointment Requested?": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Append row in sheet1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Acknowledge End of Call": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append row in sheet1": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch1": {
+      "main": [
+        [
+          {
+            "node": "Get Calendar Events",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check Booking Slot",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Take Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Calendar Events": {
+      "main": [
+        [
+          {
+            "node": "Check Calendar Availability",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Booking Slot": {
+      "main": [
+        [
+          {
+            "node": "Is Slot Available?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Slot Available?": {
+      "main": [
+        [
+          {
+            "node": "Create Appointment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Booking Slot Unavailable",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Appointment": {
+      "main": [
+        [
+          {
+            "node": "Book Appointment Tool",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Booking Slot Unavailable": {
+      "main": [
+        [
+          {
+            "node": "Return Tool Result to VAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Caller Message": {
+      "main": [
+        [
+          {
+            "node": "Send Message Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message Saved Confirmation": {
+      "main": [
+        [
+          {
+            "node": "Return Tool Result to VAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Message Notification": {
+      "main": [
+        [
+          {
+            "node": "Message Saved Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}
